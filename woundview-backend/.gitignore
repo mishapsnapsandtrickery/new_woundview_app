@@ -1,0 +1,20 @@
+apikey.env
+
+# Python
+__pycache__/
+*.pyc
+.env
+*.sqlite3
+
+# Node/React Native
+node_modules/
+.expo/
+.expo-shared/
+*.log
+
+# VSCode/IDE
+.vscode/
+.idea/
+
+# 기타
+.DS_Store
