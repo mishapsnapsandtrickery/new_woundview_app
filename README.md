@@ -78,7 +78,7 @@ npm start
 
 ## 🛠️ 개발 환경
 
-- **백엔드**: Python, FastAPI, PyTorch
+- **백엔드**: Python, Flask, PyTorch
 - **프론트엔드**: React Native, TypeScript
 - **AI 모델**: SAM (Segment Anything Model)
 
