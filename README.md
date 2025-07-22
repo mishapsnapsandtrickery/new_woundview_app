@@ -81,7 +81,3 @@ npm start
 - **백엔드**: Python, Flask, PyTorch
 - **프론트엔드**: React Native, TypeScript
 - **AI 모델**: SAM (Segment Anything Model)
-
-## 📞 문의
-
-프로젝트 관련 문의사항이 있으시면 Issues를 통해 연락해주세요.
