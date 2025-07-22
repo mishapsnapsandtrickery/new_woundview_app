@@ -4,7 +4,7 @@ import openai
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv('apikey.env')  # apikey.env 파일 명시적 로드
 
 def generate_advice_openai(
     predict_result,
@@ -49,6 +49,7 @@ def generate_advice_openai(
     - 상처 종류와 크기, 입력된 증상을 종합해서 상처 상태를 설명해줘.  
     - 염증 반응과 통증, 기능장애가 실제 상태에 어떤 영향을 주는지 자연스럽게 해석해줘.  
     - 어려운 용어는 괄호 병기로 쉽게 풀어줘 (예: 부종(붓기), 발적(붉어짐)).
+    - 상처의 크기에 대한 정보는 출력하지 말아줘.
 
     **회복 예상 기간**:  
     - 몇 일~몇 주 내 회복될 수 있는지 예측하고, 근거를 간단히 설명해줘.
@@ -80,7 +81,8 @@ def generate_advice_openai(
 
     import json
     try:
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "너는 의료 전문가이자 상처 분석 도우미야."},
@@ -89,7 +91,7 @@ def generate_advice_openai(
             temperature=0.7,
             max_tokens=1024,
         )
-        answer = response.choices[0].message['content'].strip()
+        answer = response.choices[0].message.content.strip()
         try:
             result_json = json.loads(answer)
         except json.JSONDecodeError:

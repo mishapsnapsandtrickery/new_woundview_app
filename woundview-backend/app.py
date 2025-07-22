@@ -9,8 +9,11 @@ import openai
 import os
 from flask_cors import CORS
 from sqlalchemy import func
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+app.config['DEBUG'] = True
+app.config['PROPAGATE_EXCEPTIONS'] = True
 from flask_cors import CORS
 CORS(app)  # 전체 Origin 허용
 CORS(app, supports_credentials=True)
@@ -155,7 +158,7 @@ from flask_cors import cross_origin
 def upload():
     """
     프론트엔드에서 전송된 이미지 파일을 서버에 저장하고,
-    DB(wound_records)에 파일 정보만 저장합니다. user_id는 비워둡니다.
+    DB(wound_records)에 파일 정보와 체크리스트 데이터를 저장합니다.
     실제 예측은 /predict-image에서 처리합니다.
     """
     if 'file' not in request.files:
@@ -170,8 +173,36 @@ def upload():
     save_path = os.path.join(save_dir, filename)
     file.save(save_path)
 
+    # 체크리스트 데이터와 answers 파싱
+    checklist_data = {}
+    answers = {}
+    
+    try:
+        if 'checklist' in request.form:
+            import json
+            checklist_data = json.loads(request.form['checklist'])
+            print(f"체크리스트 데이터: {checklist_data}")
+        
+        if 'answers' in request.form:
+            import json
+            answers = json.loads(request.form['answers'])
+            print(f"증상 답변: {answers}")
+    except Exception as e:
+        print(f"체크리스트 데이터 파싱 오류: {e}")
+
+    # WoundRecord 생성 시 체크리스트 데이터 포함
     new_record = WoundRecord(
-        image_path=save_path
+        image_path=save_path,
+        # 체크리스트 기본 정보
+        date=datetime.fromisoformat(checklist_data.get('date').replace('Z', '+00:00')) if checklist_data.get('date') else datetime.utcnow(),
+        bodypart=checklist_data.get('bodyPart'),
+        cause=checklist_data.get('cause'),
+        # 염증 증상 체크리스트
+        redness=answers.get('redness', False),
+        swelling=answers.get('swelling', False),
+        heat=answers.get('heat', False),
+        pain=answers.get('pain', False),
+        function_loss=answers.get('function_loss', False)
     )
     db.session.add(new_record)
     db.session.commit()
@@ -209,15 +240,110 @@ def upload_crop():
 
 @app.route('/predict-image', methods=['POST'])
 def predict_image_api():
-    advice = None
-    caution = None
-    risk_level = None
-    symptom_analysis = None
-    recovery_period = None
-    care_guide = None
-    data = request.get_json()
-    record_id = data.get('record_id')
-    original_image_path = data.get('original_image_path')
+    print("=== /predict-image 진입 ===")
+    try:
+        print("=== /predict-image try 진입 ===")
+        # 1. 데이터 파싱
+        data = request.get_json()
+        record_id = data.get('record_id')
+        original_image_path = data.get('original_image_path')
+        crop_image_path = data.get('crop_image_path')
+
+        # 2. DB에서 record 조회
+        record = WoundRecord.query.get(record_id)
+        if not record:
+            raise Exception("해당 record_id에 대한 WoundRecord가 없습니다.")
+
+        # 3. AI 분석 실행
+        from wound_prompt import generate_advice_openai
+        
+        # AI 분석을 위한 기본 데이터 준비 및 DB 업데이트
+        predict_result = record.prediction or "찰과상"
+        if not record.prediction:
+            record.prediction = predict_result
+            
+        # 상처 크기 기본값 설정
+        if not record.wound_width:
+            record.wound_width = 10  # 기본 10mm
+        if not record.wound_height:
+            record.wound_height = 10  # 기본 10mm
+        if not record.wound_area:
+            record.wound_area = record.wound_width * record.wound_height
+            
+        wound_size = {
+            'wound_width': record.wound_width,
+            'wound_height': record.wound_height,
+            'wound_area': record.wound_area
+        }
+        
+        # 사용자 입력 증상 (Boolean을 문자열로 변환)
+        redness = "예" if record.redness else "아니오"
+        swelling = "예" if record.swelling else "아니오"
+        heat = "예" if record.heat else "아니오"
+        pain = "예" if record.pain else "아니오"
+        function_loss = "예" if record.function_loss else "아니오"
+        
+        # 기본 정보 설정
+        if not record.bodypart:
+            record.bodypart = "다리"
+        if not record.cause:
+            record.cause = "일반상처"
+            
+        date = record.date or "미상"
+        bodypart = record.bodypart
+        cause = record.cause
+        
+        # AI 분석 실행
+        ai_result = generate_advice_openai(
+            predict_result=predict_result,
+            wound_size=wound_size,
+            redness=redness,
+            swelling=swelling,
+            heat=heat,
+            pain=pain,
+            function_loss=function_loss,
+            date=date,
+            bodypart=bodypart,
+            cause=cause
+        )
+        
+        # AI 분석 결과를 record에 저장
+        if 'error' not in ai_result:
+            record.risk_level = ai_result.get('risk_level')
+            record.symptom_analysis = ai_result.get('symptom_analysis')
+            record.recovery_period = ai_result.get('recovery_period')
+            record.care_guide = ai_result.get('care_guide')
+            record.caution = ai_result.get('caution')
+            record.advice = ai_result.get('action_guide')  # action_guide를 advice로 매핑
+            
+            # 기본 데이터와 AI 분석 결과 모두 DB 업데이트
+            db.session.commit()
+            print("=== 기본 데이터 설정 및 AI 분석 완료 ===")
+        else:
+            # AI 분석 실패시에도 기본 데이터는 저장
+            db.session.commit()
+            print(f"=== AI 분석 실패: {ai_result} ===\n=== 기본 데이터는 저장 완료 ===")
+
+        print("=== wound_record.to_dict() 결과 ===")
+        record_dict = record.to_dict()
+        print(record_dict)
+        
+        # 이미지 경로를 절대 URL로 변환
+        if record_dict.get('image_path'):
+            record_dict['image_path'] = f"http://127.0.0.1:5000/{record_dict['image_path']}"
+        if record_dict.get('crop_image_path'):
+            record_dict['crop_image_path'] = f"http://127.0.0.1:5000/{record_dict['crop_image_path']}"
+            
+        print("=== 이미지 경로 변환 후 ===")
+        print(f"image_path: {record_dict.get('image_path')}")
+        print(f"crop_image_path: {record_dict.get('crop_image_path')}")
+        print("=== /predict-image try 블록 통과 ===")
+        return jsonify({'wound_record': record_dict}), 200
+    except Exception as e:
+        print("=== /predict-image 에러 발생 ===")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': '서버 내부 오류', 'detail': str(e)}), 500
     crop_image_path = data.get('crop_image_path')
 
     if record_id:
@@ -226,6 +352,25 @@ def predict_image_api():
             return jsonify({'error': 'Record not found'}), 404
         if not original_image_path:
             original_image_path = record.image_path
+
+    # --- AI 분석 로직 예시 (실제 구현에 맞게 예외 처리 추가) ---
+    try:
+        # 실제 AI 분석 함수 호출 및 예외 처리
+        # 예시: ai_result = call_ai_analysis(...)
+        ai_result = None  # 실제 AI 분석 함수로 대체
+        if ai_result is None:  # 분석 실패 예시
+            return jsonify({'error': 'AI 서버와 통신에 실패했습니다.'}), 500
+
+        # wound_record 업데이트 및 반환
+        # record.advice = ai_result['advice'] 등 필드 업데이트
+        # db.session.commit()
+        print("=== /predict-image try 블록 통과 ===")
+        return jsonify({'wound_record': record.to_dict()}), 200
+    except Exception as e:
+        print("=== /predict-image 에러 발생 ===")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': '서버 내부 오류', 'detail': str(e)}), 500
         if not crop_image_path:
             crop_image_path = record.crop_image_path
 

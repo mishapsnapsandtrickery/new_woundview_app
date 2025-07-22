@@ -16,5 +16,11 @@ node_modules/
 .vscode/
 .idea/
 
+# AI Model files (too large for GitHub)
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
 # 기타
 .DS_Store
